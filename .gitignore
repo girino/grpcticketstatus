@@ -102,3 +102,6 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+api_pb2.py
+api_pb2_grpc.py
+api.proto
