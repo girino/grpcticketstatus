@@ -5,11 +5,19 @@
 ## http://www.girino.org/license
 ##
 
+
+
 import grpc
-import api_pb2
-import api_pb2_grpc
 import psutil
 import os
+
+#generate apis from proto
+from grpc_tools import protoc
+protoc.main(['-I.', '--python_out=.', '--grpc_python_out=.', 'api.proto'])
+
+import api_pb2
+import api_pb2_grpc
+
 
 TransactionTypeEnum  = {
     'REGULAR' : 0,
@@ -66,7 +74,7 @@ class WalletConnector:
     def init_channels(self):
         dcrwallet_pid = None
         for  p in psutil.process_iter():
-            if p.name().lower() == 'dcrwallet':
+            if (p.name().lower() == 'dcrwallet') or (p.name().lower() == 'dcrwallet.exe') :
                 dcrwallet_pid = p.pid
                 break
         if dcrwallet_pid == None:
