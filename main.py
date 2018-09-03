@@ -59,10 +59,10 @@ class WalletConnector:
             os.path.expandvars('%APPDATA%\\decrediton\\wallets\\mainnet'),
             os.path.expandvars('%LOCALAPPDATA%\\decrediton\\wallets\\mainnet'),
             home + "/Library/Application Support/decrediton/wallets/mainnet",
-            home + "/.dcrwallet/mainnet",
-            os.path.expandvars('%APPDATA%\\Dcrwallet\\mainnet'),
-            os.path.expandvars('%LOCALAPPDATA%\\Dcrwallet\\mainnet'),
-            home + "/Library/Application Support/dcrwallet/mainnet"
+            home + "/.dcrwallet",
+            os.path.expandvars('%APPDATA%\\Dcrwallet'),
+            os.path.expandvars('%LOCALAPPDATA%\\Dcrwallet'),
+            home + "/Library/Application Support/dcrwallet"
         ]
         ret = []
         for path in paths:

@@ -6,7 +6,7 @@ Not yet funcional
 ## install
 
 prerequisites: 
-* grpc_tools
+* grpcio-tools
 * grpc
 * psutil
 * os
