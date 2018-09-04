@@ -68,8 +68,10 @@ class WalletConnector:
         for path in paths:
             if os.path.isdir(path):
                 ret = ret + find_all_files(path, 'rpc.cert')
+        if not ret:
+            raise Exception('Certificate file not found.')
         return ret
-
+ 
     def init_channels(self):
         dcrwallet_pid = None
         for  p in psutil.process_iter():
@@ -79,6 +81,7 @@ class WalletConnector:
         if dcrwallet_pid == None:
             raise Exception('Process \'dcrwallet\' could not be found.')
 
+        # TODO: improve readability of this code
         self.channel = None
         for conn in psutil.Process(pid=dcrwallet_pid).connections():
             if conn.status == 'LISTEN':
@@ -94,6 +97,11 @@ class WalletConnector:
                     except grpc._channel._Rendezvous:
                         # ignore errors
                         self.channel = None
+                else:
+                    # if exited normally, go on
+                    continue
+                # if exited through break, break outer loop
+                break
         if self.channel == None:
             raise Exception('Could not open connection to wallet.')
 
@@ -132,24 +140,77 @@ class WalletConnector:
         for tx in self.getTicketPurchases(TransactionTypeEnum['TICKET_PURCHASE']):
             summary = {'txid' : to_hex(tx.hash), 
                         'status' : self.get_status(tx.hash),
-                        'buy_date' : tx.timestamp}
-            val = 0
-            for inpt in tx.debits:
-                val = val + inpt.previous_amount
-            summary['spent'] = val
+                        'buy_date' : tx.timestamp,
+                        'received' : 0.0,
+                        'vote_date' : 0,
+                        'vote_txid' : ''}
+            summary['ticket_spent'] = sum([inpt.previous_amount for inpt in tx.debits])
             if self.voted.has_key(tx.hash):
-                val_credits = 0
-                for oupt in self.voted[tx.hash].credits:
-                    val_credits = val_credits + oupt.amount
-                summary['received'] = val_credits
+                summary['received'] = sum([oupt.amount for oupt in self.voted[tx.hash].credits])
                 summary['vote_date'] = self.voted[tx.hash].timestamp
+                summary['vote_txid'] = to_hex(self.voted[tx.hash].hash)
+            # try to find the split tx
+            decoded = self.decoder.DecodeRawTransaction(api_pb2.DecodeRawTransactionRequest(serialized_transaction=tx.transaction)).transaction
+            split = self.wallet.GetTransaction(api_pb2.GetTransactionRequest(transaction_hash=decoded.inputs[0].previous_transaction_hash)).transaction
+            split_input = sum([inpt.previous_amount for inpt in split.debits])
+            split_out = sum([oupt.amount for oupt in split.credits])
+
+            # figure out the change, which is the
+            # outputs from the split that are in this wallet 
+            # but do not get spent by the ticket
+            indexes = [inpt.index for inpt in tx.debits]
+            previous_indexes = [decoded.inputs[z].previous_transaction_index for z in indexes]
+            change = sum([oupt.amount for oupt in split.credits if not (oupt.index in previous_indexes)])
+            summary['total_spent'] = split_input - change
             ret.append(summary)
         return ret
+
+from datetime import datetime, date
+
+def make_line(sizes, symbol, separator):
+    ret = separator
+    for i in sizes:
+        ret = ret + (symbol * i) + separator
+    return ret
+
+def pretty_print(ticket_data):
+    head = make_line([8,1,12,12,14,14, 8], '=', '+')
+    split = make_line([8,1,12,12,14,14, 8], '-', '+')
+    mask1  = '| %6s | %64s |'
+    df = "{:%Y-%m-%d}"
+    mask2  = '| %8s | %10s | %10s | %12.8f | %12.8f | %5.2f%% |'
+    mask2b  = '| %8s | %10s | %10s | %12.8f | %12s | %6s |'
+    mask_title2  = '| %8s | %10s | %10s | %12s | %12s | %6s |'
+
+    print head
+    print mask1 % ('TICKET', 'TXID TICKET' + (' ' * 53))
+    print mask1 % ('VOTE', 'TXID VOTE' + (' ' * 55))
+    print split
+    print mask_title2 % ('STATUS', 'BUY DATE', 'VOTE DATE', 'AMOUNT SPENT', 'RECEIVED', 'PROFIT')
+
+    for tx in ticket_data:
+        print head
+        print mask1 % ('ticket', tx['txid'])
+        print mask1 % ('vote', tx['vote_txid'])
+        print split
+        profit = (tx['received'] - tx['total_spent'])*100.0/tx['total_spent']
+        if tx['status'] == StatusTypeEnum['VOTED']:
+            print mask2 % (reverse_status(tx['status']), 
+                        df.format(datetime.fromtimestamp(tx['buy_date'])), df.format(datetime.fromtimestamp(tx['vote_date'])),
+                        tx['total_spent']/1e8, tx['received']/1e8, profit)
+        else:
+            print mask2b % (reverse_status(tx['status']), 
+                        df.format(datetime.fromtimestamp(tx['buy_date'])), '-',
+                        tx['total_spent']/1e8, '-', '-')
+
+    print head
 
 
 w = WalletConnector()
 
-# TODO: design a pretty printer.
 # TODO: calculate ROI/time
 # TODO: add sorting and sorting cmd params
-print(w.accumulate_ticket_data())
+# TODO: create GUI
+out = w.accumulate_ticket_data()
+
+pretty_print(out)

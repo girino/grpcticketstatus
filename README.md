@@ -20,8 +20,13 @@ prerequisites:
 
 check if the files api_pb2.py and api_pb2_grpc.py were generated.
 
+If using dcrwallet, add the following line to
+dcrwallet.conf:
+
+`tlscurve=P-256`
+
 ## Run
 
 `python main.py`
 
-dcrwallet or decrediton need to be open.
+dcrwallet or decrediton need to be open. 
