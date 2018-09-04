@@ -9,7 +9,7 @@ prerequisites:
 * grpcio-tools
 * grpc
 * psutil
-* os
+* googleapis-common-protos (windows only)
 
 (use `pip install <module>` to download the prerequisites)
 
