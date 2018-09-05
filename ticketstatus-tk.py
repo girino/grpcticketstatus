@@ -137,12 +137,15 @@ class App(Frame):
         for d in data:
             profit = '-'
             profit_percent = '-'
-            color = 'white' if last != 'white' else 'gray'
             if d['status'] == WalletConnector.StatusTypeEnum['VOTED']:
                 profit = d['received'] - d['total_spent']
                 profit_percent = nfp.format(profit * 100.0 / d['total_spent'])
                 profit = nf.format(profit/1e8)
                 color = 'green'
+            elif d['status'] == WalletConnector.StatusTypeEnum['REVOKED']:
+                color = 'orange' if last != 'orange' else 'light-orange'
+            else:
+                color = 'white' if last != 'white' else 'gray'
             last = color
             id_parent = self.treeview.insert('', 'end', text=d['txid'], 
                             values=(WalletConnector.reverse_status(d['status']), 
@@ -157,6 +160,8 @@ class App(Frame):
         self.treeview.tag_configure('green', background='#B5EAAA')
         self.treeview.tag_configure('light-green', background='#C3FDB8')
         self.treeview.tag_configure('gray', background='#E5E4E2')
+        self.treeview.tag_configure('orange', background='#D45B12')
+        self.treeview.tag_configure('light-orange', background='#F3BC2E')
     
     def sort_data(self, col):
         if (hasattr(self, 'sorted_by')) and (self.sorted_by == col):

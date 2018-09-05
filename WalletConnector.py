@@ -26,7 +26,10 @@ StatusTypeEnum = {
     'UNKNOWN' : 0,
     'IMMATURE' : 1,
     'LIVE' : 2,
-    'VOTED' : 3
+    'VOTED' : 3,
+    'REVOKED' : 4,
+    'MISSED NOT REVOKED' : 5,
+    'EXPIRED NOT REVOKED' : 6
 }
 
 def reverse_status(status):
@@ -115,21 +118,24 @@ class WalletConnector:
                         ret.append(tx)
         return ret
 
-    def map_voted(self):
-        self.voted = {}
-        for tx in self.getTicketPurchases(TransactionTypeEnum['VOTE']):
+    def map_by_type(self, transactionTypeEnum):
+        ret = {}
+        for tx in self.getTicketPurchases(transactionTypeEnum):
             # decode
             decoded = self.decoder.DecodeRawTransaction(api_pb2.DecodeRawTransactionRequest(serialized_transaction=tx.transaction))
             for input_ in decoded.transaction.inputs:
-                self.voted[input_.previous_transaction_hash] = tx
-        return self.voted
-
+                ret[input_.previous_transaction_hash] = tx
+        return ret
 
     def get_status(self, hash):
         if not hasattr(self, 'voted'):
-            self.voted = self.map_voted()
+            self.voted = self.map_by_type(TransactionTypeEnum['VOTE'])
+        if not hasattr(self, 'revoked'):
+            self.revoked = self.map_by_type(TransactionTypeEnum['REVOCATION'])
         if self.voted.has_key(hash):
             return StatusTypeEnum["VOTED"]
+        if self.revoked.has_key(hash):
+            return StatusTypeEnum["REVOKED"]
         tx_full = self.wallet.GetTransaction(api_pb2.GetTransactionRequest(transaction_hash=hash))
         if tx_full.confirmations < 256:
             return StatusTypeEnum["IMMATURE"]
