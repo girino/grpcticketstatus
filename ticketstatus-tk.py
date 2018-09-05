@@ -5,7 +5,78 @@ except ImportError:  # Python 3
     from tkinter import *
     from tkinter.ttk import *
 import datetime
+import webbrowser
 import WalletConnector
+
+# tooltip from https://stackoverflow.com/questions/3221956/how-do-i-display-tooltips-in-tkinter
+class CreateToolTip(object):
+    """
+    create a tooltip for a given widget
+    """
+    def __init__(self, parent, tree, col, text='widget info'):
+        self.waittime = 2000     #miliseconds
+        self.wraplength = 180   #pixels
+        self.widget = tree
+        self.text = text
+        self.parent = parent
+        self.col = col
+        # self.widget.bind("<Enter>", self.enter)
+        # self.widget.bind("<Leave>", self.leave)
+        self.widget.bind("<ButtonPress>", self.leave)
+        self.widget.bind("<Motion>", self.leave_enter)
+        self.event = None
+        self.id = None
+        self.tw = None
+        self.event = False
+
+    def leave_enter(self, event=None):
+        self.leave(event)
+        self.enter(event)
+
+    def enter(self, event=None):
+        if self.widget.identify_column(event.x) == self.col:
+            self.event = event
+            self.schedule()
+
+    def leave(self, event=None):
+        self.unschedule()
+        self.hidetip()
+
+    def schedule(self):
+        self.unschedule()
+        self.id = self.widget.after(self.waittime, self.showtip)
+
+    def unschedule(self):
+        id = self.id
+        self.id = None
+        if id:
+            self.widget.after_cancel(id)
+
+    def showtip(self, event=None):
+        x = y = 0
+        x, y, cx, cy = self.parent.bbox("insert")
+        if self.event:
+            x += self.event.x + 25
+            y += self.event.y + 20
+        else:
+            x += self.widget.winfo_rootx() + 25
+            y += self.widget.winfo_rooty() + 20
+
+        # creates a toplevel window
+        self.tw = Toplevel(self.widget)
+        # Leaves only the label and removes the app window
+        self.tw.wm_overrideredirect(True)
+        self.tw.wm_geometry("+%d+%d" % (x, y))
+        label = Label(self.tw, text=self.text, justify='left',
+                       background="#ffffff", relief='solid', borderwidth=1,
+                       wraplength = self.wraplength)
+        label.pack(ipadx=1)
+
+    def hidetip(self):
+        tw = self.tw
+        self.tw= None
+        if tw:
+            tw.destroy()
 
 class App(Frame):
 
@@ -18,6 +89,8 @@ class App(Frame):
         self.LoadTable(data)
         parent.grid_rowconfigure(0, weight = 1)
         parent.grid_columnconfigure(0, weight = 1)
+
+        self.tooltip = CreateToolTip(self, self.treeview, '#0', 'Control Click to open block explorer')
 
     def CreateUI(self):
         tv = Treeview(self, selectmode='browse')
@@ -51,6 +124,9 @@ class App(Frame):
         tv.column('total_spent', anchor='e', width=100)
         tv.heading('profit', text='Profit')
         tv.column('profit', anchor='e', width=100)
+
+        tv.bind("<Control-Button-1>", self.link_tree)
+        #tv.bind("<Command-Button-1>", self.link_tree)
         
     def LoadTable(self, data):
         self.treeview.delete(*self.treeview.get_children())
@@ -92,6 +168,12 @@ class App(Frame):
 
         self.data = sorted(self.data, key=lambda x: x[col], reverse=reverse)
         self.LoadTable(self.data)
+
+    def link_tree(self,event):
+        if (self.treeview.identify_column(event.x) == '#0'):
+            input_id = self.treeview.identify_row(event.y)
+            self.input_item = self.treeview.item(input_id, "text")
+            webbrowser.open('https://explorer.dcrdata.org/tx/{}'.format(self.input_item))
 
 
 if __name__ == "__main__":
