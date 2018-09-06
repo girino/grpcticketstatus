@@ -53,6 +53,9 @@ class WalletConnector:
     def __init__(self):
         self.found_certs = self.find_cert()
         self.init_channels()
+        self.voted = self.map_by_type(TransactionTypeEnum['VOTE'])
+        self.revoked = self.map_by_type(TransactionTypeEnum['REVOCATION'])
+
 
     def find_cert(self):
         # looks for cert in linux
@@ -99,6 +102,7 @@ class WalletConnector:
                         break
                     except grpc._channel._Rendezvous:
                         # ignore errors
+                        print '%s:%d %s' % (conn.laddr.ip, conn.laddr.port, cert)
                         self.channel = None
                 else:
                     # if exited normally, go on
@@ -109,14 +113,26 @@ class WalletConnector:
             raise Exception('Could not open connection to wallet.')
 
     def getTicketPurchases(self, type):
-        ret = []
-        all_txs = self.wallet.GetTransactions(api_pb2.GetTransactionsRequest())
-        for blockinfo in all_txs:
-            if hasattr (blockinfo, 'mined_transactions') and hasattr (blockinfo.mined_transactions, 'transactions'):
-                for tx in blockinfo.mined_transactions.transactions:
-                    if hasattr(tx, 'transaction_type') and tx.transaction_type == type:
-                        ret.append(tx)
-        return ret
+        if not hasattr(self, 'tx_cache'):
+            self.tx_cache = [tx for tx in self.getTicketPurchases_inner()]
+        for tx in self.tx_cache:
+            if hasattr(tx, 'transaction_type') and tx.transaction_type == type:
+                yield tx
+        raise StopIteration()
+
+    def getTicketPurchases_inner(self):
+        # instaed of getting all at once, get by 20000 blocks count.
+        current_block = self.wallet.BestBlock(api_pb2.BestBlockRequest()).height
+        interval = 20000
+        for block in xrange(0, current_block+1, interval):
+            print 'requesting blocks from {} to {}'.format(block, block+interval-1)
+            request = api_pb2.GetTransactionsRequest(starting_block_height=block, ending_block_height=block+interval-1)
+            all_txs = self.wallet.GetTransactions(request)
+            for blockinfo in all_txs:
+                if hasattr (blockinfo, 'mined_transactions') and hasattr (blockinfo.mined_transactions, 'transactions'):
+                    for tx in blockinfo.mined_transactions.transactions:
+                        yield tx
+        raise StopIteration()
 
     def map_by_type(self, transactionTypeEnum):
         ret = {}
@@ -157,16 +173,22 @@ class WalletConnector:
                 summary['vote_txid'] = to_hex(self.voted[tx.hash].hash)
             # try to find the split tx
             decoded = self.decoder.DecodeRawTransaction(api_pb2.DecodeRawTransactionRequest(serialized_transaction=tx.transaction)).transaction
-            split = self.wallet.GetTransaction(api_pb2.GetTransactionRequest(transaction_hash=decoded.inputs[0].previous_transaction_hash)).transaction
-            split_input = sum([inpt.previous_amount for inpt in split.debits])
-            split_out = sum([oupt.amount for oupt in split.credits])
+            if decoded.inputs[0].previous_transaction_hash in self.tx_cache:
+                req = api_pb2.GetTransactionRequest(transaction_hash=decoded.inputs[0].previous_transaction_hash)
+                split_GetTransactionRequest = self.wallet.GetTransaction(req)
+                split = split_GetTransactionRequest.transaction
+                split_input = sum([inpt.previous_amount for inpt in split.debits])
+                # figure out the change, which is the
+                # outputs from the split that are in this wallet 
+                # but do not get spent by the ticket
+                indexes = [inpt.index for inpt in tx.debits]
+                previous_indexes = [decoded.inputs[z].previous_transaction_index for z in indexes]
+                change = sum([oupt.amount for oupt in split.credits if not (oupt.index in previous_indexes)])
+            else:
+                # no split tx, use my own input
+                split_input = sum([inpt.previous_amount for inpt in tx.debits])
+                change = 0
 
-            # figure out the change, which is the
-            # outputs from the split that are in this wallet 
-            # but do not get spent by the ticket
-            indexes = [inpt.index for inpt in tx.debits]
-            previous_indexes = [decoded.inputs[z].previous_transaction_index for z in indexes]
-            change = sum([oupt.amount for oupt in split.credits if not (oupt.index in previous_indexes)])
             summary['total_spent'] = split_input - change
             ret.append(summary)
         return ret

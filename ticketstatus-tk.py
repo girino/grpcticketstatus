@@ -56,8 +56,8 @@ class CreateToolTip(object):
         x = y = 0
         x, y, cx, cy = self.parent.bbox("insert")
         if self.event:
-            x += self.event.x + 25
-            y += self.event.y + 20
+            x += self.widget.winfo_rootx() + self.event.x + 25
+            y += self.widget.winfo_rooty() + self.event.y + 20
         else:
             x += self.widget.winfo_rootx() + 25
             y += self.widget.winfo_rooty() + 20
@@ -78,19 +78,14 @@ class CreateToolTip(object):
         if tw:
             tw.destroy()
 
-class App(Frame):
-
-    def __init__(self, parent, data):
-        Frame.__init__(self, parent, padding=(3,3,3,3))
+class ScrollableTreeView(Frame):
+    def __init__(self, parent, **kwargs):
+        Frame.__init__(self, parent, padding=(0,0,0,0), **kwargs)
         self.grid(column=0, row=0, sticky = (N,S,W,E))
 
         self.CreateUI()
-        self.data = data
-        self.LoadTable(data)
         parent.grid_rowconfigure(0, weight = 1)
         parent.grid_columnconfigure(0, weight = 1)
-
-        self.tooltip = CreateToolTip(self, self.treeview, '#0', 'Control Click to open block explorer')
 
     def CreateUI(self):
         tv = Treeview(self, selectmode='browse')
@@ -113,6 +108,23 @@ class App(Frame):
         self.vsb = ysb
         self.hsb = xsb
         
+        self.createColumns()
+
+    def createColumns(self):
+        tv = self.treeview
+        tv['columns'] = ()
+
+
+class TicketTreeView(ScrollableTreeView):
+
+    def __init__(self, parent, data):
+        ScrollableTreeView.__init__(self, parent)
+        self.data = data
+        self.LoadTable(data)
+        self.tooltip = CreateToolTip(self, self.treeview, '#0', 'Control Click to open block explorer')
+
+    def createColumns(self):
+        tv = self.treeview
         tv['columns'] = ('status', 'buy_date', 'total_spent', 'profit')
         tv.heading('#0', text='Ticket/Vote Txid')
         tv.column('#0', anchor='w', width=600)
@@ -180,6 +192,69 @@ class App(Frame):
             self.input_item = self.treeview.item(input_id, "text")
             webbrowser.open('https://explorer.dcrdata.org/tx/{}'.format(self.input_item))
 
+class TotalInfo(ScrollableTreeView):
+
+    def __init__(self, parent, data):
+        ScrollableTreeView.__init__(self, parent)
+        self.data = self.consolidate(data)
+        self.LoadTable(self.data)
+
+    def createColumns(self):
+        tv = self.treeview
+        tv['columns'] = ('property', 'value')
+        tv.heading('#0', text='')
+        tv.column('#0', anchor='w', width=0)
+        tv.heading('value', text='Value')
+        tv.column('value', anchor='e', width=100)
+        tv.heading('property', text='')
+        tv.column('property', anchor='w', width=100)
+
+    def LoadTable(self, data):
+        self.treeview.delete(*self.treeview.get_children())
+        for i in xrange(len(data)):
+            self.treeview.insert('', 'end', text='', values=data[i])
+
+    def consolidate(self, data):
+        nf = "{:14.8f}"
+        nfp = "{:5.2f}%"
+        nf2 = "{:5.2f}"
+        live_immature = [WalletConnector.StatusTypeEnum['LIVE'], WalletConnector.StatusTypeEnum['IMMATURE']]
+        live = [WalletConnector.StatusTypeEnum['LIVE']]
+        immature = [WalletConnector.StatusTypeEnum['IMMATURE']]
+        locked = sum([d['ticket_spent'] for d in data if d['status'] in live_immature])
+        voted = [WalletConnector.StatusTypeEnum['VOTED']]
+        total_profit = sum([d['received'] - d['total_spent'] for d in data if d['status'] in voted])
+        total_spent = sum([d['total_spent'] for d in data if d['status'] in voted])
+        avg_profit = total_profit*100.0/total_spent
+        sum_date = sum([d['vote_date'] - d['buy_date'] for d in data if d['status'] in voted])
+        count_voted = len([1 for d in data if d['status'] in voted])
+        count_live = len([1 for d in data if d['status'] in live])
+        count_immature = len([1 for d in data if d['status'] in immature])
+        avg_date = sum_date*1.0/count_voted/3600/24
+        return [
+            ['Voted count' , count_voted],
+            ['Live count' , count_live],
+            ['Immature count' , count_immature],
+            ['Locked', nf.format(locked/1e8)],
+            ['Total Profit' , nf.format(total_profit/1e8)],
+            ['Average Profit' , nfp.format(avg_profit)],
+            ['Average Vote Time' , nf2.format(avg_date)],
+        ]
+    
+
+class App(Frame):
+
+    def __init__(self, parent, ticket_list):
+        Frame.__init__(self, parent, padding=(3,3,3,3))
+        self.grid(column=0, row=0, sticky = (N,S,W,E))
+
+        self.treeview = TicketTreeView(self, ticket_list)
+        self.treeview.pack(anchor=NW, expand=True, fill=BOTH, side=LEFT)
+        self.right_pane = TotalInfo(self, ticket_list)
+        self.right_pane.pack(anchor=NE, expand=False, fill=Y, side=LEFT)
+
+        parent.grid_rowconfigure(0, weight = 1)
+        parent.grid_columnconfigure(0, weight = 1)
 
 if __name__ == "__main__":
 
