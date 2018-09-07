@@ -139,41 +139,56 @@ class TicketTreeView(ScrollableTreeView):
 
         tv.bind("<Control-Button-1>", self.link_tree)
         #tv.bind("<Command-Button-1>", self.link_tree)
-        
+    
+    def get_colors(self, status, last):
+        colors = {
+            'UNKNOWN' : ['white', 'gray'],
+            'IMMATURE' : ['white', 'gray'],
+            'LIVE' : ['white', 'gray'],
+            'VOTED' : ['green', 'light-green'],
+            'REVOKED' : ['orange', 'light-orange'],
+            'MISSED NOT REVOKED' : ['orange', 'light-orange'],
+            'EXPIRED NOT REVOKED' : ['orange', 'light-orange'],
+            'WAITING CONFIRMATION' : ['blue', 'light-blue']
+        }[WalletConnector.reverse_status(status)]
+        if colors[0] == last:
+            return colors[1]
+        return colors[0]
+
+
     def LoadTable(self, data):
         self.treeview.delete(*self.treeview.get_children())
         df = "{:%Y-%m-%d}"
         nf = "{:14.8f}"
         nfp = "{:5.2f}%"
-        last = 'gray'
+        color = self.get_colors(WalletConnector.StatusTypeEnum['LIVE'], '')
         for d in data:
             profit = '-'
             profit_percent = '-'
-            if d['status'] == WalletConnector.StatusTypeEnum['VOTED']:
+            voted = [WalletConnector.StatusTypeEnum['VOTED'], WalletConnector.StatusTypeEnum['WAITING CONFIRMATION']]
+            if d['status'] in voted:
                 profit = d['received'] - d['total_spent']
                 profit_percent = nfp.format(profit * 100.0 / d['total_spent'])
                 profit = nf.format(profit/1e8)
-                color = 'green'
-            elif d['status'] == WalletConnector.StatusTypeEnum['REVOKED']:
-                color = 'orange' if last != 'orange' else 'light-orange'
-            else:
-                color = 'white' if last != 'white' else 'gray'
-            last = color
+            color = self.get_colors(d['status'], color)
             id_parent = self.treeview.insert('', 'end', text=d['txid'], 
                             values=(WalletConnector.reverse_status(d['status']), 
                                     df.format(datetime.datetime.fromtimestamp(d['buy_date'])), 
                                     nf.format(d['total_spent']/1e8), profit), tag=color)
-            if d['status'] == WalletConnector.StatusTypeEnum['VOTED']:
+            if d['status'] in voted:
+                color = self.get_colors(d['status'], color)
                 self.treeview.insert(id_parent, 'end', text=d['vote_txid'], 
                             values=('-', 
                                     df.format(datetime.datetime.fromtimestamp(d['vote_date'])), 
-                                    nf.format(d['received']/1e8), profit_percent), tag='light-green')
+                                    nf.format(d['received']/1e8), profit_percent), tag=color)
                 self.treeview.item(id_parent, open=True)
         self.treeview.tag_configure('green', background='#B5EAAA')
         self.treeview.tag_configure('light-green', background='#C3FDB8')
         self.treeview.tag_configure('gray', background='#E5E4E2')
         self.treeview.tag_configure('orange', background='#D45B12')
         self.treeview.tag_configure('light-orange', background='#F3BC2E')
+        self.treeview.tag_configure('blue', background='#B5AAEA')
+        self.treeview.tag_configure('light-blue', background='#C3B8FD')
     
     def sort_data(self, col):
         if (hasattr(self, 'sorted_by')) and (self.sorted_by == col):
@@ -222,15 +237,19 @@ class TotalInfo(ScrollableTreeView):
         live = [WalletConnector.StatusTypeEnum['LIVE']]
         immature = [WalletConnector.StatusTypeEnum['IMMATURE']]
         locked = sum([d['ticket_spent'] for d in data if d['status'] in live_immature])
-        voted = [WalletConnector.StatusTypeEnum['VOTED']]
+        voted = [WalletConnector.StatusTypeEnum['VOTED'], WalletConnector.StatusTypeEnum['WAITING CONFIRMATION']]
         total_profit = sum([d['received'] - d['total_spent'] for d in data if d['status'] in voted])
         total_spent = sum([d['total_spent'] for d in data if d['status'] in voted])
-        avg_profit = total_profit*100.0/total_spent
+        avg_profit = 0
+        if total_spent != 0:
+            avg_profit = total_profit*100.0/total_spent
         sum_date = sum([d['vote_date'] - d['buy_date'] for d in data if d['status'] in voted])
         count_voted = len([1 for d in data if d['status'] in voted])
         count_live = len([1 for d in data if d['status'] in live])
         count_immature = len([1 for d in data if d['status'] in immature])
-        avg_date = sum_date*1.0/count_voted/3600/24
+        avg_date = 0
+        if count_voted != 0:
+            avg_date = sum_date*1.0/count_voted/3600/24
         return [
             ['Voted count' , count_voted],
             ['Live count' , count_live],

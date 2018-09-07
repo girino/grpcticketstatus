@@ -29,7 +29,8 @@ StatusTypeEnum = {
     'VOTED' : 3,
     'REVOKED' : 4,
     'MISSED NOT REVOKED' : 5,
-    'EXPIRED NOT REVOKED' : 6
+    'EXPIRED NOT REVOKED' : 6,
+    'WAITING CONFIRMATION' : 7
 }
 
 def reverse_status(status):
@@ -149,6 +150,10 @@ class WalletConnector:
         if not hasattr(self, 'revoked'):
             self.revoked = self.map_by_type(TransactionTypeEnum['REVOCATION'])
         if self.voted.has_key(hash):
+            vote = self.voted[hash]
+            vote_full = self.wallet.GetTransaction(api_pb2.GetTransactionRequest(transaction_hash=vote.hash))
+            if vote_full.confirmations < 256:
+                return StatusTypeEnum["WAITING CONFIRMATION"]
             return StatusTypeEnum["VOTED"]
         if self.revoked.has_key(hash):
             return StatusTypeEnum["REVOKED"]
