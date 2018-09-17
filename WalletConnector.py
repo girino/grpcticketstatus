@@ -24,14 +24,16 @@ TransactionTypeEnum  = {
 
 StatusTypeEnum = {
     'UNKNOWN' : 0,
-    'IMMATURE' : 1,
-    'LIVE' : 2,
-    'VOTED' : 3,
-    'REVOKED' : 4,
-    'MISSED NOT REVOKED' : 5,
-    'EXPIRED NOT REVOKED' : 6,
-    'WAITING CONFIRMATION' : 7
+	'UNMINED' : 1,
+	'IMMATURE' : 2,
+	'LIVE' : 3,
+	'VOTED' : 4,
+	'MISSED' : 5,
+	'EXPIRED' : 6,
+	'REVOKED' : 7,
+    'WAITING CONFIRMATION' : 8
 }
+
 
 def reverse_status(status):
     for key in StatusTypeEnum.keys():
@@ -41,7 +43,7 @@ def reverse_status(status):
 
 def find_all_files(path, filename):
     matches = []
-    for root, dirnames, filenames in os.walk(path):
+    for root, dirnames, filenames in os.walk(path, followlinks=True):
         for fn in filenames:
             if fn.lower() == filename.lower():
                 matches.append(os.path.join(root, fn))
@@ -50,13 +52,16 @@ def find_all_files(path, filename):
 def to_hex(bin):
     return bin[::-1].encode('hex')
 
+def from_hex(asc):
+    return asc.decode('hex')[::-1]
+
 class WalletConnector:
     def __init__(self):
         self.found_certs = self.find_cert()
         self.init_channels()
         self.voted = self.map_by_type(TransactionTypeEnum['VOTE'])
         self.revoked = self.map_by_type(TransactionTypeEnum['REVOCATION'])
-
+        self.tickets = self.get_tickets_map()
 
     def find_cert(self):
         # looks for cert in linux
@@ -116,6 +121,7 @@ class WalletConnector:
     def getTicketPurchases(self, type):
         if not hasattr(self, 'tx_cache'):
             self.tx_cache = [tx for tx in self.getTicketPurchases_inner()]
+            self.tx_hashes_cache = [tx.hash for tx in self.tx_cache]
         for tx in self.tx_cache:
             if hasattr(tx, 'transaction_type') and tx.transaction_type == type:
                 yield tx
@@ -134,6 +140,13 @@ class WalletConnector:
                     for tx in blockinfo.mined_transactions.transactions:
                         yield tx
         raise StopIteration()
+
+    def get_tickets_map(self):
+        response = self.wallet.GetTickets(api_pb2.GetTicketsRequest())
+        ret = {}
+        for r in response:
+            ret[r.ticket.ticket.hash] = r.ticket
+        return ret 
 
     def map_by_type(self, transactionTypeEnum):
         ret = {}
@@ -155,12 +168,14 @@ class WalletConnector:
             if vote_full.confirmations < 256:
                 return StatusTypeEnum["WAITING CONFIRMATION"]
             return StatusTypeEnum["VOTED"]
-        if self.revoked.has_key(hash):
-            return StatusTypeEnum["REVOKED"]
-        tx_full = self.wallet.GetTransaction(api_pb2.GetTransactionRequest(transaction_hash=hash))
-        if tx_full.confirmations < 256:
-            return StatusTypeEnum["IMMATURE"]
-        return StatusTypeEnum["LIVE"]
+        ticket = self.tickets[hash]
+        return ticket.ticket_status
+        # if self.revoked.has_key(hash):
+            # return ticket.ticket_status
+        #tx_full = self.wallet.GetTransaction(api_pb2.GetTransactionRequest(transaction_hash=hash))
+        # if tx_full.confirmations < 256:
+        #     return StatusTypeEnum["IMMATURE"]
+        # return StatusTypeEnum["LIVE"]
 
     def accumulate_ticket_data(self):
         ret = []
@@ -178,7 +193,7 @@ class WalletConnector:
                 summary['vote_txid'] = to_hex(self.voted[tx.hash].hash)
             # try to find the split tx
             decoded = self.decoder.DecodeRawTransaction(api_pb2.DecodeRawTransactionRequest(serialized_transaction=tx.transaction)).transaction
-            if decoded.inputs[0].previous_transaction_hash in self.tx_cache:
+            if decoded.inputs[0].previous_transaction_hash in self.tx_hashes_cache:
                 req = api_pb2.GetTransactionRequest(transaction_hash=decoded.inputs[0].previous_transaction_hash)
                 split_GetTransactionRequest = self.wallet.GetTransaction(req)
                 split = split_GetTransactionRequest.transaction
@@ -195,9 +210,23 @@ class WalletConnector:
                 change = 0
 
             summary['total_spent'] = split_input - change
+            tk_val = sum([oupt.value for oupt in decoded.outputs])
+            summary['is_split'] = (summary['total_spent'] < tk_val)
             ret.append(summary)
         return ret
 
+    def import_script(self, hex_scripts, password):
+        response = []
+        for hex_script in hex_scripts[1:]:
+            script = from_hex(hex_script)
+            request = api_pb2.ImportScriptRequest(passphrase=password, script=script)
+            response.append(self.wallet.ImportScript(request))
+            print response[-1]
+        script = from_hex(hex_scripts[0])
+        request = api_pb2.ImportScriptRequest(passphrase=password, script=script)
+        response.append(self.wallet.ImportScript(request))
+        return response
+    
 from datetime import datetime, date
 
 def make_line(sizes, symbol, separator):
@@ -211,7 +240,7 @@ def pretty_print(ticket_data):
     split = make_line([8,1,12,12,14,14, 8], '-', '+')
     mask1  = '| %6s | %64s |'
     df = "{:%Y-%m-%d}"
-    mask2  = '| %8s | %10s | %10s | %12.8f | %12.8f | %5.2f%% |'
+    mask2  = '| %8s | %10s | %10s | %12.8f | %12.8f | %5.2f%% | %r '
     mask2b  = '| %8s | %10s | %10s | %12.8f | %12s | %6s |'
     mask_title2  = '| %8s | %10s | %10s | %12s | %12s | %6s |'
 
@@ -227,10 +256,10 @@ def pretty_print(ticket_data):
         print mask1 % ('vote', tx['vote_txid'])
         print split
         profit = (tx['received'] - tx['total_spent'])*100.0/tx['total_spent']
-        if tx['status'] == StatusTypeEnum['VOTED']:
+        if tx['status'] >= StatusTypeEnum['VOTED']:
             print mask2 % (reverse_status(tx['status']), 
                         df.format(datetime.fromtimestamp(tx['buy_date'])), df.format(datetime.fromtimestamp(tx['vote_date'])),
-                        tx['total_spent']/1e8, tx['received']/1e8, profit)
+                        tx['total_spent']/1e8, tx['received']/1e8, profit, tx['is_split'])
         else:
             print mask2b % (reverse_status(tx['status']), 
                         df.format(datetime.fromtimestamp(tx['buy_date'])), '-',
@@ -247,4 +276,11 @@ if __name__ == '__main__':
     out = w.accumulate_ticket_data()
 
     pretty_print(out)
-    raw_input('Press ENTER to close.')
+    #raw_input('Press ENTER to close.')
+
+    #from sys import argv
+    #lines = [line.strip() for line in open(argv[2])]
+    #print w.import_script(lines, argv[1])
+    #ret = w.wallet.GetTickets(api_pb2.GetTicketsRequest(starting_block_height=0))
+    #print [x for x in ret]
+

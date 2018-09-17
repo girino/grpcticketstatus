@@ -125,11 +125,13 @@ class TicketTreeView(ScrollableTreeView):
 
     def createColumns(self):
         tv = self.treeview
-        tv['columns'] = ('status', 'buy_date', 'total_spent', 'profit')
+        tv['columns'] = ('split', 'status', 'buy_date', 'total_spent', 'profit')
         tv.heading('#0', text='Ticket/Vote Txid')
         tv.column('#0', anchor='w', width=600)
+        tv.heading('split', text='Split?', command=lambda: self.sort_data('is_split'))
+        tv.column('split', anchor='center', width=50)
         tv.heading('status', text='Status', command=lambda: self.sort_data('status'))
-        tv.column('status', anchor='center', width=100)
+        tv.column('status', anchor='center', width=50)
         tv.heading('buy_date', text='Buy/Vote Date', command=lambda: self.sort_data('buy_date'))
         tv.column('buy_date', anchor='center', width=100)
         tv.heading('total_spent', text='Amount Spent/Received')
@@ -143,12 +145,13 @@ class TicketTreeView(ScrollableTreeView):
     def get_colors(self, status, last):
         colors = {
             'UNKNOWN' : ['white', 'gray'],
+            'UNMINED' : ['white', 'gray'],
             'IMMATURE' : ['white', 'gray'],
             'LIVE' : ['white', 'gray'],
             'VOTED' : ['green', 'light-green'],
             'REVOKED' : ['orange', 'light-orange'],
-            'MISSED NOT REVOKED' : ['orange', 'light-orange'],
-            'EXPIRED NOT REVOKED' : ['orange', 'light-orange'],
+            'MISSED' : ['orange', 'light-orange'],
+            'EXPIRED' : ['orange', 'light-orange'],
             'WAITING CONFIRMATION' : ['blue', 'light-blue']
         }[WalletConnector.reverse_status(status)]
         if colors[0] == last:
@@ -168,17 +171,20 @@ class TicketTreeView(ScrollableTreeView):
             voted = [WalletConnector.StatusTypeEnum['VOTED'], WalletConnector.StatusTypeEnum['WAITING CONFIRMATION']]
             if d['status'] in voted:
                 profit = d['received'] - d['total_spent']
-                profit_percent = nfp.format(profit * 100.0 / d['total_spent'])
+                profit_percent = 0
+                if d['total_spent'] != 0:
+                    profit_percent = nfp.format(profit * 100.0 / d['total_spent'])
                 profit = nf.format(profit/1e8)
             color = self.get_colors(d['status'], color)
             id_parent = self.treeview.insert('', 'end', text=d['txid'], 
-                            values=(WalletConnector.reverse_status(d['status']), 
+                            values=('Y' if d['is_split'] else 'N',
+                                    WalletConnector.reverse_status(d['status']), 
                                     df.format(datetime.datetime.fromtimestamp(d['buy_date'])), 
                                     nf.format(d['total_spent']/1e8), profit), tag=color)
             if d['status'] in voted:
                 color = self.get_colors(d['status'], color)
                 self.treeview.insert(id_parent, 'end', text=d['vote_txid'], 
-                            values=('-', 
+                            values=('-', '-', 
                                     df.format(datetime.datetime.fromtimestamp(d['vote_date'])), 
                                     nf.format(d['received']/1e8), profit_percent), tag=color)
                 self.treeview.item(id_parent, open=True)
@@ -234,10 +240,11 @@ class TotalInfo(ScrollableTreeView):
         nfp = "{:5.2f}%"
         nf2 = "{:5.2f}"
         live_immature = [WalletConnector.StatusTypeEnum['LIVE'], WalletConnector.StatusTypeEnum['IMMATURE']]
-        live = [WalletConnector.StatusTypeEnum['LIVE']]
         immature = [WalletConnector.StatusTypeEnum['IMMATURE']]
-        locked = sum([d['ticket_spent'] for d in data if d['status'] in live_immature])
+        live = [WalletConnector.StatusTypeEnum['LIVE']]
         voted = [WalletConnector.StatusTypeEnum['VOTED'], WalletConnector.StatusTypeEnum['WAITING CONFIRMATION']]
+
+        locked = sum([d['ticket_spent'] for d in data if d['status'] in live_immature])
         total_profit = sum([d['received'] - d['total_spent'] for d in data if d['status'] in voted])
         total_spent = sum([d['total_spent'] for d in data if d['status'] in voted])
         avg_profit = 0
@@ -250,6 +257,22 @@ class TotalInfo(ScrollableTreeView):
         avg_date = 0
         if count_voted != 0:
             avg_date = sum_date*1.0/count_voted/3600/24
+
+        locked_split = sum([d['ticket_spent'] for d in data if (d['status'] in live_immature) and (d['is_split'])])
+        total_profit_split = sum([d['received'] - d['total_spent'] for d in data if (d['status'] in voted) and (d['is_split'])])
+        total_spent_split = sum([d['total_spent'] for d in data if (d['status'] in voted) and (d['is_split'])])
+        avg_profit_split = 0
+        if total_spent_split != 0:
+            avg_profit_split = total_profit_split*100.0/total_spent_split
+        sum_date_split = sum([d['vote_date'] - d['buy_date'] for d in data if (d['status'] in voted) and (d['is_split'])])
+        count_voted_split = len([1 for d in data if (d['status'] in voted) and (d['is_split'])])
+        count_live_split = len([1 for d in data if (d['status'] in live) and (d['is_split'])])
+        count_immature_split = len([1 for d in data if (d['status'] in immature) and (d['is_split'])])
+        avg_date_split = 0
+        if count_voted_split != 0:
+            avg_date_split = sum_date_split*1.0/count_voted_split/3600/24
+
+        count_voted_split = len([1 for d in data if (d['status'] in voted) and (d['is_split'])])
         return [
             ['Voted count' , count_voted],
             ['Live count' , count_live],
@@ -258,6 +281,14 @@ class TotalInfo(ScrollableTreeView):
             ['Total Profit' , nf.format(total_profit/1e8)],
             ['Average Profit' , nfp.format(avg_profit)],
             ['Average Vote Time' , nf2.format(avg_date)],
+            ['SPLIT TICKETS:' , '-----------'],
+            ['Voted count (splitted)' , count_voted_split],
+            ['Live count (splitted)' , count_live_split],
+            ['Immature count (splitted)' , count_immature_split],
+            ['Locked (splitted)', nf.format(locked_split/1e8)],
+            ['Total Profit (splitted)' , nf.format(total_profit_split/1e8)],
+            ['Average Profit (splitted)' , nfp.format(avg_profit_split)],
+            ['Average Vote Time (splitted)' , nf2.format(avg_date_split)]
         ]
     
 
