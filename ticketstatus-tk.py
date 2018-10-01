@@ -7,6 +7,7 @@ except ImportError:  # Python 3
 import datetime
 import webbrowser
 import WalletConnector
+import time
 
 # tooltip from https://stackoverflow.com/questions/3221956/how-do-i-display-tooltips-in-tkinter
 class CreateToolTip(object):
@@ -125,11 +126,13 @@ class TicketTreeView(ScrollableTreeView):
 
     def createColumns(self):
         tv = self.treeview
-        tv['columns'] = ('split', 'status', 'buy_date', 'total_spent', 'profit')
+        tv['columns'] = ('split', 'mine', 'status', 'buy_date', 'total_spent', 'profit')
         tv.heading('#0', text='Ticket/Vote Txid')
         tv.column('#0', anchor='w', width=600)
         tv.heading('split', text='Split?', command=lambda: self.sort_data('is_split'))
-        tv.column('split', anchor='center', width=50)
+        tv.column('split', anchor='center', width=25)
+        tv.heading('mine', text='Mine?', command=lambda: self.sort_data('is_split'))
+        tv.column('mine', anchor='center', width=25)
         tv.heading('status', text='Status', command=lambda: self.sort_data('status'))
         tv.column('status', anchor='center', width=50)
         tv.heading('buy_date', text='Buy/Vote Date', command=lambda: self.sort_data('buy_date'))
@@ -168,7 +171,7 @@ class TicketTreeView(ScrollableTreeView):
         for d in data:
             profit = '-'
             profit_percent = '-'
-            voted = [WalletConnector.StatusTypeEnum['VOTED'], WalletConnector.StatusTypeEnum['WAITING CONFIRMATION']]
+            voted = [WalletConnector.StatusTypeEnum['VOTED'], WalletConnector.StatusTypeEnum['WAITING CONFIRMATION'], WalletConnector.StatusTypeEnum['REVOKED']]
             if d['status'] in voted:
                 profit = d['received'] - d['total_spent']
                 profit_percent = 0
@@ -177,14 +180,14 @@ class TicketTreeView(ScrollableTreeView):
                 profit = nf.format(profit/1e8)
             color = self.get_colors(d['status'], color)
             id_parent = self.treeview.insert('', 'end', text=d['txid'], 
-                            values=('Y' if d['is_split'] else 'N',
+                            values=('Y' if d['is_split'] else 'N', 'Y' if d['is_mine'] else 'N',
                                     WalletConnector.reverse_status(d['status']), 
                                     df.format(datetime.datetime.fromtimestamp(d['buy_date'])), 
                                     nf.format(d['total_spent']/1e8), profit), tag=color)
             if d['status'] in voted:
                 color = self.get_colors(d['status'], color)
                 self.treeview.insert(id_parent, 'end', text=d['vote_txid'], 
-                            values=('-', '-', 
+                            values=('-', '-', '-', 
                                     df.format(datetime.datetime.fromtimestamp(d['vote_date'])), 
                                     nf.format(d['received']/1e8), profit_percent), tag=color)
                 self.treeview.item(id_parent, open=True)
@@ -243,6 +246,7 @@ class TotalInfo(ScrollableTreeView):
         immature = [WalletConnector.StatusTypeEnum['IMMATURE']]
         live = [WalletConnector.StatusTypeEnum['LIVE']]
         voted = [WalletConnector.StatusTypeEnum['VOTED'], WalletConnector.StatusTypeEnum['WAITING CONFIRMATION']]
+        revoked = [WalletConnector.StatusTypeEnum['REVOKED']]
 
         locked = sum([d['ticket_spent'] for d in data if d['status'] in live_immature])
         total_profit = sum([d['received'] - d['total_spent'] for d in data if d['status'] in voted])
@@ -250,13 +254,18 @@ class TotalInfo(ScrollableTreeView):
         avg_profit = 0
         if total_spent != 0:
             avg_profit = total_profit*100.0/total_spent
-        sum_date = sum([d['vote_date'] - d['buy_date'] for d in data if d['status'] in voted])
+        # sum_date_all = (sum([d['vote_date'] - d['buy_date'] for d in data if d['status'] in (voted+revoked)]) +
+        #             sum([time.time() - d['buy_date'] for d in data if not (d['status'] in (voted+revoked))])
+        #             )
+        sum_date_voted_revoked = sum([d['vote_date'] - d['buy_date'] for d in data if d['status'] in (voted+revoked)])
         count_voted = len([1 for d in data if d['status'] in voted])
+        # count_all = len([1 for d in data])
+        count_voted_revoked = len([1 for d in data if d['status'] in (voted+revoked)])
         count_live = len([1 for d in data if d['status'] in live])
         count_immature = len([1 for d in data if d['status'] in immature])
         avg_date = 0
         if count_voted != 0:
-            avg_date = sum_date*1.0/count_voted/3600/24
+            avg_date = sum_date_voted_revoked*1.0/count_voted_revoked/3600/24
 
         locked_split = sum([d['ticket_spent'] for d in data if (d['status'] in live_immature) and (d['is_split'])])
         total_profit_split = sum([d['received'] - d['total_spent'] for d in data if (d['status'] in voted) and (d['is_split'])])
@@ -264,13 +273,14 @@ class TotalInfo(ScrollableTreeView):
         avg_profit_split = 0
         if total_spent_split != 0:
             avg_profit_split = total_profit_split*100.0/total_spent_split
-        sum_date_split = sum([d['vote_date'] - d['buy_date'] for d in data if (d['status'] in voted) and (d['is_split'])])
+        sum_date_split = sum([d['vote_date'] - d['buy_date'] for d in data if (d['status'] in (voted+revoked) and (d['is_split']))])
         count_voted_split = len([1 for d in data if (d['status'] in voted) and (d['is_split'])])
+        count_voted_revoked_split = len([1 for d in data if (d['status'] in (voted+revoked)) and (d['is_split'])])
         count_live_split = len([1 for d in data if (d['status'] in live) and (d['is_split'])])
         count_immature_split = len([1 for d in data if (d['status'] in immature) and (d['is_split'])])
         avg_date_split = 0
         if count_voted_split != 0:
-            avg_date_split = sum_date_split*1.0/count_voted_split/3600/24
+            avg_date_split = sum_date_split*1.0/count_voted_revoked_split/3600/24
 
         count_voted_split = len([1 for d in data if (d['status'] in voted) and (d['is_split'])])
         return [
@@ -299,9 +309,9 @@ class App(Frame):
         self.grid(column=0, row=0, sticky = (N,S,W,E))
 
         self.treeview = TicketTreeView(self, ticket_list)
-        self.treeview.pack(anchor=NW, expand=True, fill=BOTH, side=LEFT)
+        self.treeview.grid(column=0, row=0, sticky = (N,S,W))
         self.right_pane = TotalInfo(self, ticket_list)
-        self.right_pane.pack(anchor=NE, expand=False, fill=Y, side=LEFT)
+        self.right_pane.grid(column=1, row=0, sticky = (N,S,E))
 
         parent.grid_rowconfigure(0, weight = 1)
         parent.grid_columnconfigure(0, weight = 1)
@@ -317,7 +327,9 @@ if __name__ == "__main__":
                 'total_spent' : 1,
                 'vote_txid' : '-',
                 'vote_date' : 0,
-                'received' : 0}]
+                'received' : 0,
+                'is_split' : False,
+                'is_mine' : False}]
 
     root = Tk()
     root.style = Style()

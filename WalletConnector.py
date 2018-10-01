@@ -191,6 +191,10 @@ class WalletConnector:
                 summary['received'] = sum([oupt.amount for oupt in self.voted[tx.hash].credits])
                 summary['vote_date'] = self.voted[tx.hash].timestamp
                 summary['vote_txid'] = to_hex(self.voted[tx.hash].hash)
+            elif self.revoked.has_key(tx.hash):
+                summary['received'] = sum([oupt.amount for oupt in self.revoked[tx.hash].credits])
+                summary['vote_date'] = self.revoked[tx.hash].timestamp
+                summary['vote_txid'] = to_hex(self.revoked[tx.hash].hash)
             # try to find the split tx
             decoded = self.decoder.DecodeRawTransaction(api_pb2.DecodeRawTransactionRequest(serialized_transaction=tx.transaction)).transaction
             if decoded.inputs[0].previous_transaction_hash in self.tx_hashes_cache:
@@ -211,7 +215,9 @@ class WalletConnector:
 
             summary['total_spent'] = split_input - change
             tk_val = sum([oupt.value for oupt in decoded.outputs])
+            tk_val_mine = sum([oupt.amount for oupt in tx.credits])
             summary['is_split'] = (summary['total_spent'] < tk_val)
+            summary['is_mine'] = (tk_val_mine > 0)
             ret.append(summary)
         return ret
 
