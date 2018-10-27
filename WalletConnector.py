@@ -148,7 +148,7 @@ class WalletConnector:
         current_block = self.wallet.BestBlock(api_pb2.BestBlockRequest()).height
         interval = 20000
         for block in xrange(0, current_block+1, interval):
-            print 'requesting blocks from {} to {}'.format(block, block+interval-1)
+            #print 'requesting blocks from {} to {}'.format(block, block+interval-1)
             request = api_pb2.GetTransactionsRequest(starting_block_height=block, ending_block_height=block+interval-1)
             all_txs = self.wallet.GetTransactions(request)
             for blockinfo in all_txs:
@@ -249,6 +249,10 @@ class WalletConnector:
         script = from_hex(hex_scripts[0])
         request = api_pb2.ImportScriptRequest(passphrase=password, script=script)
         response.append(self.wallet.ImportScript(request))
+        return response
+
+    def get_balance(self):
+        response = self.wallet.Balance(api_pb2.BalanceRequest(account_number=0))
         return response
     
 from datetime import datetime, date
