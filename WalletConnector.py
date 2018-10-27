@@ -56,8 +56,13 @@ def from_hex(asc):
     return asc.decode('hex')[::-1]
 
 class WalletConnector:
-    def __init__(self):
-        self.found_certs = self.find_cert()
+    def __init__(self, cert=None, connection=None):
+        self.found_certs = [cert]
+        if cert == None:
+            self.found_certs = self.find_cert()
+        self.connections = [connection]
+        if connection == None:
+            self.connections = self.get_connection_data()
         self.init_channels()
         self.voted = self.map_by_type(TransactionTypeEnum['VOTE'])
         self.revoked = self.map_by_type(TransactionTypeEnum['REVOCATION'])
@@ -83,38 +88,48 @@ class WalletConnector:
         if not ret:
             raise Exception('Certificate file not found.')
         return ret
- 
-    def init_channels(self):
+    
+    def get_connection_data(self):
         dcrwallet_pid = None
-        for  p in psutil.process_iter():
-            if (p.name().lower() == 'dcrwallet') or (p.name().lower() == 'dcrwallet.exe') :
+        # for  p in psutil.process_iter():
+        #     if (p.name().lower() == 'dcrwallet') or (p.name().lower() == 'dcrwallet.exe') :
+        for p in psutil.process_iter(attrs=["name", "exe", "cmdline"]):
+            names = ['dcrwallet', 'dcrwallet.exe', 'dcrwallet.master']
+            if p.info['name'].lower() in names \
+                    or p.info['exe'] and os.path.basename(p.info['exe']).lower() in names \
+                    or p.info['cmdline'] and p.info['cmdline'][0].lower() in names:
                 dcrwallet_pid = p.pid
                 break
         if dcrwallet_pid == None:
             raise Exception('Process \'dcrwallet\' could not be found.')
-
-        # TODO: improve readability of this code
-        self.channel = None
+        connections = []
         for conn in psutil.Process(pid=dcrwallet_pid).connections():
             if conn.status == 'LISTEN':
-                for cert in self.found_certs:
-                    self.creds = grpc.ssl_channel_credentials(open(cert).read())
-                    try:
-                        self.channel = grpc.secure_channel('%s:%d' % (conn.laddr.ip, conn.laddr.port), self.creds)
-                        self.wallet = api_pb2_grpc.WalletServiceStub(self.channel)
-                        self.decoder = api_pb2_grpc.DecodeMessageServiceStub(self.channel)
-                        # ping to test
-                        self.wallet.Ping(api_pb2.PingRequest())
-                        break
-                    except grpc._channel._Rendezvous:
-                        # ignore errors
-                        print '%s:%d %s' % (conn.laddr.ip, conn.laddr.port, cert)
-                        self.channel = None
-                else:
-                    # if exited normally, go on
-                    continue
-                # if exited through break, break outer loop
-                break
+                connections.append('%s:%d' % (conn.laddr.ip, conn.laddr.port))
+        return connections
+
+    def init_channels(self):
+        # TODO: improve readability of this code
+        self.channel = None
+        for conn in self.connections:
+            for cert in self.found_certs:
+                self.creds = grpc.ssl_channel_credentials(open(cert).read())
+                try:
+                    self.channel = grpc.secure_channel(conn, self.creds)
+                    self.wallet = api_pb2_grpc.WalletServiceStub(self.channel)
+                    self.decoder = api_pb2_grpc.DecodeMessageServiceStub(self.channel)
+                    # ping to test
+                    self.wallet.Ping(api_pb2.PingRequest())
+                    break
+                except grpc._channel._Rendezvous:
+                    # ignore errors
+                    print '%s %s' % (conn, cert)
+                    self.channel = None
+            else:
+                # if exited normally, go on
+                continue
+            # if exited through break, break outer loop
+            break
         if self.channel == None:
             raise Exception('Could not open connection to wallet.')
 
@@ -168,8 +183,10 @@ class WalletConnector:
             if vote_full.confirmations < 256:
                 return StatusTypeEnum["WAITING CONFIRMATION"]
             return StatusTypeEnum["VOTED"]
-        ticket = self.tickets[hash]
-        return ticket.ticket_status
+        if self.tickets.has_key(hash):
+            ticket = self.tickets[hash]
+            return ticket.ticket_status
+        return StatusTypeEnum['UNKNOWN']
         # if self.revoked.has_key(hash):
             # return ticket.ticket_status
         #tx_full = self.wallet.GetTransaction(api_pb2.GetTransactionRequest(transaction_hash=hash))
