@@ -56,7 +56,7 @@ def to_hex(bin):
 def from_hex(asc):
     return asc.decode('hex')[::-1]
 
-class WalletConnector:
+class WalletConnector(object):
     def __init__(self, cert=None, connection=None):
         self.found_certs = [cert]
         if cert == None:
@@ -65,9 +65,21 @@ class WalletConnector:
         if connection == None:
             self.connections = self.get_connection_data()
         self.init_channels()
-        self.voted = self.map_by_type(TransactionTypeEnum['VOTE'])
-        self.revoked = self.map_by_type(TransactionTypeEnum['REVOCATION'])
-        self.tickets = self.get_tickets_map()
+    
+    def voted(self):
+        if not hasattr(self, '_voted'):
+            self._voted = self.map_by_type(TransactionTypeEnum['VOTE'])
+        return self._voted
+
+    def revoked(self):
+        if not hasattr(self, '_revoked'):
+            self._revoked = self.map_by_type(TransactionTypeEnum['REVOCATION'])
+        return self._revoked
+
+    def tickets(self):
+        if not hasattr(self, '_tickets'):
+            self._tickets = self.get_tickets_map()
+        return self._tickets
 
     def find_cert(self):
         # looks for cert in linux
@@ -94,10 +106,12 @@ class WalletConnector:
         dcrwallet_pid = None
         # for  p in psutil.process_iter():
         #     if (p.name().lower() == 'dcrwallet') or (p.name().lower() == 'dcrwallet.exe') :
-        for p in psutil.process_iter(attrs=["name", "exe", "cmdline"]):
+        attrs = ["name", "cmdline", "exe"]
+        if sys.platform in ['darwin', 'Darwin']:
+            attrs = ["name", "cmdline"]
+        for p in psutil.process_iter(attrs=attrs):
             names = ['dcrwallet', 'dcrwallet.exe', 'dcrwallet.master']
             if p.info['name'].lower() in names \
-                    or p.info['exe'] and os.path.basename(p.info['exe']).lower() in names \
                     or p.info['cmdline'] and p.info['cmdline'][0].lower() in names:
                 dcrwallet_pid = p.pid
                 break
@@ -174,18 +188,18 @@ class WalletConnector:
         return ret
 
     def get_status(self, hash):
-        if not hasattr(self, 'voted'):
-            self.voted = self.map_by_type(TransactionTypeEnum['VOTE'])
-        if not hasattr(self, 'revoked'):
-            self.revoked = self.map_by_type(TransactionTypeEnum['REVOCATION'])
-        if self.voted.has_key(hash):
-            vote = self.voted[hash]
+        # if not hasattr(self, 'voted'):
+        #     self.voted = self.map_by_type(TransactionTypeEnum['VOTE'])
+        # if not hasattr(self, 'revoked'):
+        #     self.revoked = self.map_by_type(TransactionTypeEnum['REVOCATION'])
+        if self.voted().has_key(hash):
+            vote = self.voted()[hash]
             vote_full = self.wallet.GetTransaction(api_pb2.GetTransactionRequest(transaction_hash=vote.hash))
             if vote_full.confirmations < 256:
                 return StatusTypeEnum["WAITING CONFIRMATION"]
             return StatusTypeEnum["VOTED"]
-        if self.tickets.has_key(hash):
-            ticket = self.tickets[hash]
+        if self.tickets().has_key(hash):
+            ticket = self.tickets()[hash]
             return ticket.ticket_status
         return StatusTypeEnum['UNKNOWN']
         # if self.revoked.has_key(hash):
@@ -205,14 +219,14 @@ class WalletConnector:
                         'vote_date' : 0,
                         'vote_txid' : ''}
             summary['ticket_spent'] = sum([inpt.previous_amount for inpt in tx.debits])
-            if self.voted.has_key(tx.hash):
-                summary['received'] = sum([oupt.amount for oupt in self.voted[tx.hash].credits])
-                summary['vote_date'] = self.voted[tx.hash].timestamp
-                summary['vote_txid'] = to_hex(self.voted[tx.hash].hash)
-            elif self.revoked.has_key(tx.hash):
-                summary['received'] = sum([oupt.amount for oupt in self.revoked[tx.hash].credits])
-                summary['vote_date'] = self.revoked[tx.hash].timestamp
-                summary['vote_txid'] = to_hex(self.revoked[tx.hash].hash)
+            if self.voted().has_key(tx.hash):
+                summary['received'] = sum([oupt.amount for oupt in self.voted()[tx.hash].credits])
+                summary['vote_date'] = self.voted()[tx.hash].timestamp
+                summary['vote_txid'] = to_hex(self.voted()[tx.hash].hash)
+            elif self.revoked().has_key(tx.hash):
+                summary['received'] = sum([oupt.amount for oupt in self.revoked()[tx.hash].credits])
+                summary['vote_date'] = self.revoked()[tx.hash].timestamp
+                summary['vote_txid'] = to_hex(self.revoked()[tx.hash].hash)
             # try to find the split tx
             decoded = self.decoder.DecodeRawTransaction(api_pb2.DecodeRawTransactionRequest(serialized_transaction=tx.transaction)).transaction
             if decoded.inputs[0].previous_transaction_hash in self.tx_hashes_cache:
@@ -283,7 +297,9 @@ def pretty_print(ticket_data):
         print mask1 % ('ticket', tx['txid'])
         print mask1 % ('vote', tx['vote_txid'])
         print split
-        profit = (tx['received'] - tx['total_spent'])*100.0/tx['total_spent']
+        profit = 0
+        if tx['total_spent'] != 0:
+            profit = (tx['received'] - tx['total_spent'])*100.0/tx['total_spent']
         if tx['status'] >= StatusTypeEnum['VOTED']:
             print mask2 % (reverse_status(tx['status']), 
                         df.format(datetime.fromtimestamp(tx['buy_date'])), df.format(datetime.fromtimestamp(tx['vote_date'])),

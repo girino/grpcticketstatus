@@ -106,3 +106,5 @@ api_pb2.py
 api_pb2_grpc.py
 api.proto
 .DS_Store
+.vscode/launch.json
+.vscode/settings.json
