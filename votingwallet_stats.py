@@ -17,22 +17,19 @@ class VotingWallet(WalletConnector):
             self._tickets_map_cache = self.get_tickets_map()
         return self._tickets_map_cache
 
-    def is_split(self, ticket):
-        if not hasattr(self, '_is_split_cache'):
-            self._is_split_cache = dict()
-        if not ticket.ticket.hash in self._is_split_cache:
+    def num_outs(self, ticket):
+        if not hasattr(self, '_num_outputs_cache'):
+            self._num_outputs_cache = dict()
+        if not ticket.ticket.hash in self._num_outputs_cache:
             decoded = self.decoder.DecodeRawTransaction(api_pb2.DecodeRawTransactionRequest(serialized_transaction=ticket.ticket.transaction)).transaction
-            ret = len(decoded.outputs) > 5
-            self._is_split_cache[ticket.ticket.hash] = ret
-        return self._is_split_cache[ticket.ticket.hash]
+            ret = len(decoded.outputs)
+            self._num_outputs_cache[ticket.ticket.hash] = ret
+        return self._num_outputs_cache[ticket.ticket.hash]
+
+    def is_split(self, ticket):
+        return self.num_outs(ticket) > 5
 
     def get_tickets_by_interval(self, begin, end):
-        bought = []
-        bought_split = []
-        voted = []
-        voted_split = []
-        revoked = []
-        revoked_split = []
         sts = api_pb2.GetTicketsResponse.TicketDetails.TicketStatus
         tmap = self.tickets_map()
         bought = [tmap[thash] for thash in tmap if compare_times(begin, end, tmap[thash].ticket.timestamp)]
@@ -92,7 +89,7 @@ def pretty_print_monthly(dates, stats_map):
         for line in lines:
             print line
 
-def pretty_print_global_stats(raw_stats):
+def pretty_print_global_stats(w, raw_stats):
     all_voted = reduce(lambda a, x: a + x[1], raw_stats, [])
     all_voted_split = reduce(lambda a, x: a + x[1+3], raw_stats, [])
     all_bought = reduce(lambda a, x: a + x[0], raw_stats, [])
@@ -105,10 +102,20 @@ def pretty_print_global_stats(raw_stats):
     max_vote_time_split = reduce(lambda a, x: max(a, (x.spender.timestamp - x.ticket.timestamp)), all_voted_split, -1)
     min_vote_time = reduce(lambda a, x: min(a, (x.spender.timestamp - x.ticket.timestamp)), all_voted, 3600*24*365)
     min_vote_time_split = reduce(lambda a, x: min(a, (x.spender.timestamp - x.ticket.timestamp)), all_voted_split, 3600*24*365)
+    num_outs = reduce(lambda a, x: a + [(w.num_outs(x)-1)/2-1], all_bought, [])
+    num_outs_split = reduce(lambda a, x: a + [(w.num_outs(x)-1)/2-1], all_bought_split, [])
+    avg_outs = sum(num_outs)/len(num_outs)
+    avg_outs_split = sum(num_outs_split)/len(num_outs_split)
+    min_outs = min(num_outs)
+    min_outs_split = min(num_outs_split)
+    max_outs = max(num_outs)
+    max_outs_split = max(num_outs_split)
     print "Vote time:", "min: % 3.2f, avg: % 3.2f, max: % 3.2f" % (1.0*min_vote_time/3600/24, 1.0*vote_time/len(all_voted)/3600/24, 1.0*max_vote_time/3600/24)
     print "  (split):", "min: % 3.2f, avg: % 3.2f, max: % 3.2f" % (1.0*min_vote_time_split/3600/24, 1.0*vote_time_split/len(all_voted_split)/3600/24, 1.0*max_vote_time_split/3600/24)
     print "All Tickets:", "bought: %5d, voted: %5d, revoked: %5d" % (len(all_bought), len(all_voted), len(all_revoke))
     print "    (split):", "bought: %5d, voted: %5d, revoked: %5d" % (len(all_bought_split), len(all_voted_split), len(all_revoke_split))
+    print "Num Participants:", "min: %3.2f, avg: %3.2f, max: %3.2f" % (min_outs, avg_outs, max_outs)
+    print "         (split):", "min: %3.2f, avg: %3.2f, max: %3.2f" % (min_outs_split, avg_outs_split, max_outs_split)
 
 if __name__ == '__main__':
     w = VotingWallet()
@@ -127,5 +134,5 @@ if __name__ == '__main__':
         month = '%02d/%04d' % (d.month, d.year)
         stats_map[month] = stats[i]
     pretty_print_monthly(dates, stats_map)
-    pretty_print_global_stats(raw_stats)
+    pretty_print_global_stats(w, raw_stats)
 
